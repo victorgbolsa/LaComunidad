@@ -1,0 +1,57 @@
+services:
+  # Web service (siempre encendido para recibir los cron jobs)
+  - type: web
+    name: lacomunidad-server
+    env: python
+    plan: pro
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 600 --workers 1
+    envVars:
+      # ⚠️  NO pongas valores aquí — añádelos en Render Dashboard > Environment
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_USER
+        value: victorgbolsa
+      - key: GITHUB_REPO
+        value: LaComunidad
+      - key: GITHUB_BRANCH
+        value: main
+      - key: SUPABASE_URL
+        value: https://othghdtplmlkrqwfcjzk.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: RESEND_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_EMAIL
+        sync: false
+
+  # Cron 1: Dashboard diario lunes-viernes 8:00 Madrid (= 7:00 UTC en invierno)
+  - type: cron
+    name: dashboard-diario
+    env: python
+    plan: pro
+    schedule: "0 7 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import requests; r=requests.post('https://lacomunidad-server.onrender.com/cron/dashboard'); print(r.json())"
+
+  # Cron 2: Alertas precio — cada minuto en horario mercado USA (13:30-21:00 UTC)
+  - type: cron
+    name: alertas-precio
+    env: python
+    plan: pro
+    schedule: "* 13-20 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import requests; r=requests.post('https://lacomunidad-server.onrender.com/cron/alertas'); print(r.json())"
+
+  # Cron 3: Email semanal — lunes 9:00 Madrid (= 8:00 UTC)
+  - type: cron
+    name: email-semanal
+    env: python
+    plan: pro
+    schedule: "0 8 * * 1"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import requests; r=requests.post('https://lacomunidad-server.onrender.com/cron/email-semanal'); print(r.json())"
