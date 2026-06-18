@@ -1,0 +1,8 @@
+flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+yfinance==0.2.40
+pandas==2.2.3
+beautifulsoup4==4.12.3
+pytz==2024.2
+pywebpush==2.0.0
