@@ -2,22 +2,22 @@
 """
 SERVIDOR RENDER — VICTOR GALAN: LA COMUNIDAD
 """
-
+ 
 import os, sys, json, base64, time, logging
 from datetime import datetime, timezone, timedelta
 import pytz
 import requests
 from flask import Flask, jsonify
-
+ 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 log = logging.getLogger(__name__)
-
+ 
 app = Flask(__name__)
-
+ 
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_USER   = os.environ.get("GITHUB_USER", "victorgbolsa")
 GITHUB_REPO   = os.environ.get("GITHUB_REPO", "LaComunidad")
@@ -25,13 +25,13 @@ RESEND_KEY    = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM   = os.environ.get("RESEND_FROM", "")
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "https://othghdtplmlkrqwfcjzk.supabase.co")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
-
+ 
 MADRID = pytz.timezone("Europe/Madrid")
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  1. GITHUB UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def upload_to_github(html_content: str) -> bool:
     if not GITHUB_TOKEN:
         log.error("GITHUB_TOKEN no configurado")
@@ -68,11 +68,11 @@ def upload_to_github(html_content: str) -> bool:
     else:
         log.error(f"Error subiendo a GitHub: {r.status_code} {r.text[:300]}")
         return False
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  2. GENERAR DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def run_market_tracker() -> str | None:
     import subprocess, pathlib
     script_path = pathlib.Path(__file__).parent / "market_tracker.py"
@@ -110,11 +110,11 @@ def run_market_tracker() -> str | None:
     except Exception as e:
         log.error(f"Error ejecutando market_tracker: {e}", exc_info=True)
         return None
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  3. ALERTAS DE PRECIO
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def get_alertas_activas() -> list:
     if not SUPABASE_KEY:
         return []
@@ -131,7 +131,7 @@ def get_alertas_activas() -> list:
         return r.json()
     log.error(f"Error obteniendo alertas: {r.status_code}")
     return []
-
+ 
 def get_precio_actual(ticker: str) -> float | None:
     try:
         import yfinance as yf
@@ -142,7 +142,7 @@ def get_precio_actual(ticker: str) -> float | None:
     except Exception as e:
         log.warning(f"Error precio {ticker}: {e}")
     return None
-
+ 
 def marcar_alerta_disparada(alerta_id: int) -> None:
     if not SUPABASE_KEY:
         return
@@ -158,7 +158,7 @@ def marcar_alerta_disparada(alerta_id: int) -> None:
         json={"activa": False, "disparada_at": datetime.now(timezone.utc).isoformat()},
         timeout=10
     )
-
+ 
 def enviar_push_notificacion(subscription: dict, titulo: str, cuerpo: str) -> None:
     try:
         from pywebpush import webpush, WebPushException
@@ -174,7 +174,7 @@ def enviar_push_notificacion(subscription: dict, titulo: str, cuerpo: str) -> No
         )
     except Exception as e:
         log.warning(f"Error push: {e}")
-
+ 
 def get_subscripciones_usuario(user_id: str) -> list:
     if not SUPABASE_KEY:
         return []
@@ -189,7 +189,7 @@ def get_subscripciones_usuario(user_id: str) -> list:
     if r.status_code == 200:
         return [row["subscription"] for row in r.json()]
     return []
-
+ 
 def check_alertas() -> dict:
     now_madrid = datetime.now(MADRID)
     if not (14 <= now_madrid.hour < 21 or (now_madrid.hour == 21 and now_madrid.minute <= 15)):
@@ -220,11 +220,11 @@ def check_alertas() -> dict:
             for sub in get_subscripciones_usuario(user_id):
                 enviar_push_notificacion(sub, titulo, cuerpo)
     return {"status": "ok", "alertas_revisadas": len(alertas), "disparadas": disparadas}
-
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  4. EMAIL SEMANAL
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 def get_todos_los_emails() -> list:
     if not SUPABASE_KEY:
         return []
@@ -240,7 +240,7 @@ def get_todos_los_emails() -> list:
         return r.json()
     log.error(f"Error obteniendo emails: {r.status_code}")
     return []
-
+ 
 def get_top_ideas() -> list:
     if not SUPABASE_KEY:
         return []
@@ -255,20 +255,20 @@ def get_top_ideas() -> list:
     if r.status_code == 200:
         return r.json()
     return []
-
+ 
 def enviar_email_semanal() -> dict:
     import yfinance as yf
-
+ 
     if not RESEND_KEY or not RESEND_FROM:
         log.error("RESEND_API_KEY o RESEND_FROM no configurados")
         return {"status": "error", "msg": "Resend no configurado"}
-
+ 
     alumnos = get_todos_los_emails()
     ideas   = get_top_ideas()
     if not alumnos:
         log.warning("No hay alumnos en profiles — enviados: 0")
         return {"status": "ok", "enviados": 0}
-
+ 
     now_madrid = datetime.now(MADRID)
     # FIX: usar timedelta importado arriba, no __import__
     lunes      = now_madrid - timedelta(days=now_madrid.weekday())
@@ -277,7 +277,7 @@ def enviar_email_semanal() -> dict:
     semana_str = f"Semana del {lunes.strftime('%d')} al {viernes.strftime('%d de %B de %Y')}"
     edicion    = now_madrid.isocalendar()[1]
     fecha_tt   = viernes.strftime("%d %b %Y").upper()
-
+ 
     def pct(ticker, period="5d"):
         try:
             h = yf.Ticker(ticker).history(period=period)
@@ -287,7 +287,7 @@ def enviar_email_semanal() -> dict:
         except:
             pass
         return None
-
+ 
     mercados = [
         ("S&P 500",    "^GSPC",  "ÍNDICES"),
         ("NASDAQ 100", "^NDX",   "ÍNDICES"),
@@ -300,7 +300,7 @@ def enviar_email_semanal() -> dict:
         ("VIX",        "^VIX",   "MACRO"),
         ("BONO 10Y",   "^TNX",   "MACRO"),
     ]
-
+ 
     def tt_row(nombre, cambio_pct):
         if cambio_pct is None:
             arrow, color, pct_str = "▶", "#8a96a3", "N/D"
@@ -322,7 +322,7 @@ def enviar_email_semanal() -> dict:
           <td style="font-family:'Courier New',monospace;font-size:11px;width:14px;text-align:center;color:{color};">{arrow}</td>
           <td style="font-family:'Courier New',monospace;font-size:12px;font-weight:700;color:{color};text-align:right;padding:4px 0;">{pct_str}</td>
         </tr>"""
-
+ 
     rows_indices = ""
     rows_macro   = ""
     for nombre, ticker_yf, seccion in mercados:
@@ -332,7 +332,7 @@ def enviar_email_semanal() -> dict:
             rows_indices += row
         else:
             rows_macro += row
-
+ 
     ideas_html = ""
     for idea in ideas[:3]:
         ticker  = idea.get("ticker", "")
@@ -348,7 +348,7 @@ def enviar_email_semanal() -> dict:
           <div style="font-size:12px;color:#3d4a5c;line-height:1.65;text-align:justify;margin-bottom:8px;">{titulo}</div>
           <a href="https://www.tradingview.com/chart/?symbol=NASDAQ:{ticker}" style="display:inline-flex;align-items:center;gap:5px;background:rgba(79,110,247,.07);color:#4f6ef7;font-size:11px;font-weight:600;padding:5px 11px;border-radius:6px;border:1px solid rgba(79,110,247,.18);text-decoration:none;">📈 Ver gráfico →</a>
         </div>"""
-
+ 
     html_email = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -358,14 +358,14 @@ def enviar_email_semanal() -> dict:
 </head>
 <body style="margin:0;padding:12px;background:#f0f2f5;font-family:'Inter',Arial,sans-serif;font-size:13px;color:#3d4a5c;">
 <div style="max-width:600px;margin:0 auto;">
-
+ 
   <div style="background:linear-gradient(135deg,#e8edf7 0%,#edf0f7 50%,#e4eaf5 100%);border:1px solid #d0d8ee;border-radius:12px;padding:28px 24px;margin-bottom:10px;text-align:center;">
     <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#4f6ef7;margin-bottom:8px;">Victor Galán · La Comunidad</div>
     <div style="font-family:'Syne',Arial,sans-serif;font-weight:800;font-size:22px;color:#1a2332;line-height:1.2;">Resumen semanal<br>del mercado</div>
     <div style="font-size:12px;color:#8a96a3;margin-top:6px;">{semana_str}</div>
     <div style="display:inline-block;margin-top:14px;background:rgba(79,110,247,.12);color:#4f6ef7;font-size:11px;font-weight:600;padding:5px 16px;border-radius:99px;border:1px solid rgba(79,110,247,.25);">Edición #{edicion}</div>
   </div>
-
+ 
   <table width="100%" cellpadding="0" cellspacing="7" style="margin-bottom:10px;">
     <tr>
       <td style="background:#fff;border:1px solid #e2e6eb;border-radius:8px;padding:10px 8px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.05);">
@@ -390,7 +390,7 @@ def enviar_email_semanal() -> dict:
       </td>
     </tr>
   </table>
-
+ 
   <div style="background:#fff;border:1px solid #e2e6eb;border-radius:10px;padding:16px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.06);">
     <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a96a3;margin-bottom:14px;border-left:3px solid #4f6ef7;padding-left:8px;">📊 Mercados de la semana</div>
     <div style="background:#fdfcf8;border:1px solid #e8e4d8;border-radius:8px;padding:14px;font-family:'Courier New',monospace;">
@@ -409,12 +409,12 @@ def enviar_email_semanal() -> dict:
       <p style="font-size:12px;color:#3d4a5c;line-height:1.75;text-align:justify;margin:0;">Europa flojea relativamente. Bitcoin con fuerte movimiento semanal activa el modo risk-on. El VIX en mínimos confirma la calma reinante en el mercado.</p>
     </div>
   </div>
-
+ 
   <div style="background:#fff;border:1px solid #e2e6eb;border-radius:10px;padding:16px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.06);">
     <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a96a3;margin-bottom:14px;border-left:3px solid #4f6ef7;padding-left:8px;">💡 Ideas más votadas de la comunidad</div>
     {ideas_html if ideas_html else '<p style="font-size:12px;color:#8a96a3;">No hay ideas esta semana todavía.</p>'}
   </div>
-
+ 
   <div style="background:#fff;border:1px solid #e2e6eb;border-radius:10px;padding:16px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.06);">
     <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a96a3;margin-bottom:10px;border-left:3px solid #4f6ef7;padding-left:8px;">👀 Watchlist de la semana</div>
     <p style="font-size:12px;color:#3d4a5c;line-height:1.7;text-align:justify;margin-bottom:10px;">Estas son las empresas con mejor aspecto técnico esta semana. <strong style="color:#1a2332;">Cópialas en TradingView y cuéntanos en la comunidad qué te parecen.</strong></p>
@@ -424,20 +424,20 @@ def enviar_email_semanal() -> dict:
       MELI &nbsp;·&nbsp; SPOT &nbsp;·&nbsp; TTD &nbsp;·&nbsp; DDOG &nbsp;·&nbsp; NET &nbsp;·&nbsp; ANET
     </p>
   </div>
-
+ 
   <a href="https://victorgbolsa.github.io/LaComunidad/" style="display:block;text-align:center;background:#4f6ef7;color:#fff;padding:14px;border-radius:10px;font-family:'Syne',Arial,sans-serif;font-weight:800;font-size:14px;text-decoration:none;margin-bottom:10px;">Abrir el dashboard completo →</a>
-
+ 
   <div style="text-align:center;font-size:11px;color:#8a96a3;padding:6px 0 4px;">
     © Victor Galán · La Comunidad &nbsp;·&nbsp; <a href="#" style="color:#8a96a3;">Darse de baja</a>
   </div>
 </div>
 </body>
 </html>"""
-
+ 
     enviados = 0
     errores  = 0
     emails_lista = [a["email"] for a in alumnos if a.get("email")]
-
+ 
     BATCH = 50
     for i in range(0, len(emails_lista), BATCH):
         batch = emails_lista[i:i+BATCH]
@@ -459,14 +459,14 @@ def enviar_email_semanal() -> dict:
         else:
             errores += len(batch)
             log.error(f"Error enviando batch: {r.status_code} {r.text[:200]}")
-
+ 
     return {"status": "ok", "enviados": enviados, "errores": errores}
-
-
+ 
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  5. ENDPOINTS FLASK
 # ══════════════════════════════════════════════════════════════════════════════
-
+ 
 @app.route("/")
 def index():
     return jsonify({
@@ -474,7 +474,7 @@ def index():
         "servicio": "Victor Galán: La Comunidad — Servidor Render",
         "hora_madrid": datetime.now(MADRID).strftime("%d/%m/%Y %H:%M:%S"),
     })
-
+ 
 def _run_dashboard_bg():
     import threading
     log.info("═══ BACKGROUND: Generando dashboard ═══")
@@ -489,7 +489,7 @@ def _run_dashboard_bg():
         log.info(f"✓ Dashboard completado en background en {elapsed}s")
     else:
         log.error("Error subiendo a GitHub en background")
-
+ 
 @app.route("/cron/dashboard")
 def cron_dashboard():
     import threading
@@ -500,18 +500,18 @@ def cron_dashboard():
         "msg": "Dashboard generándose en background.",
         "hora_madrid": datetime.now(MADRID).strftime("%d/%m/%Y %H:%M:%S")
     })
-
+ 
 @app.route("/cron/alertas")
 def cron_alertas():
     resultado = check_alertas()
     return jsonify(resultado)
-
+ 
 @app.route("/cron/email")
 def cron_email():
     log.info("═══ CRON: Enviando email semanal ═══")
     resultado = enviar_email_semanal()
     return jsonify(resultado)
-
+ 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     log.info(f"Servidor arrancando en puerto {port}")
