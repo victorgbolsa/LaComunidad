@@ -26,12 +26,12 @@ services:
       - key: VAPID_EMAIL
         sync: false
 
-  # ── Cron 1: Dashboard cada día a las 8:00 Madrid (= 7:00 UTC en invierno) ─
+  # ── Cron 1: Dashboard cada día a las 16:00 y 11:00 Madrid (= 7:00 UTC en invierno) ─
   - type: cron
     name: cron-dashboard
     runtime: python
     buildCommand: pip install -r requirements.txt
-    schedule: "0 7 * * 1-5"   # Lunes a viernes 7:00 UTC (8:00 Madrid invierno)
+    schedule: "0 14,21 * * 1-5"   # Lunes a viernes 16:00 UTC y 11:00H  Madrid 
     startCommand: python -c "import requests; r = requests.get('https://lacomunidad-server.onrender.com/cron/dashboard', timeout=600); print(r.json())"
     plan: pro
 
