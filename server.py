@@ -200,23 +200,33 @@ def check_alertas() -> dict:
     disparadas = 0
     for alerta in alertas:
         ticker     = alerta.get("ticker", "")
-        condicion  = alerta.get("condicion", "")
-        precio_obj = float(alerta.get("precio_objetivo", 0))
+        # Soporta tanto 'condicion' (mayor/menor) como 'direccion' (above/below)
+        condicion  = alerta.get("condicion") or alerta.get("direccion", "")
+        # precio_objetivo puede venir como precio_objetivo o precio
+        precio_obj_raw = alerta.get("precio_objetivo") or alerta.get("precio")
+        if precio_obj_raw is None:
+            log.warning(f"Alerta {alerta.get('id')} sin precio_objetivo, saltando")
+            continue
+        precio_obj = float(precio_obj_raw)
+        if not condicion:
+            log.warning(f"Alerta {alerta.get('id')} sin condicion/direccion, saltando")
+            continue
         user_id    = alerta.get("user_id", "")
         precio_actual = get_precio_actual(ticker)
         if precio_actual is None:
             continue
         cumplida = (
-            (condicion == "mayor" and precio_actual >= precio_obj) or
-            (condicion == "menor" and precio_actual <= precio_obj)
+            (condicion in ("mayor", "above") and precio_actual >= precio_obj) or
+            (condicion in ("menor", "below") and precio_actual <= precio_obj)
         )
         if cumplida:
             log.info(f"🔔 Alerta disparada: {ticker} {condicion} {precio_obj} (actual: {precio_actual})")
             marcar_alerta_disparada(alerta["id"])
             disparadas += 1
-            simbolo = "⬆️" if condicion == "mayor" else "⬇️"
+            es_subida = condicion in ("mayor", "above")
+            simbolo = "⬆️" if es_subida else "⬇️"
             titulo  = f"{simbolo} Alerta: {ticker}"
-            cuerpo  = f"{ticker} ha {'superado' if condicion == 'mayor' else 'bajado de'} {precio_obj:.2f}$ (actual: {precio_actual:.2f}$)"
+            cuerpo  = f"{ticker} ha {'superado' if es_subida else 'bajado de'} {precio_obj:.2f}$ (actual: {precio_actual:.2f}$)"
             for sub in get_subscripciones_usuario(user_id):
                 enviar_push_notificacion(sub, titulo, cuerpo)
     return {"status": "ok", "alertas_revisadas": len(alertas), "disparadas": disparadas}
@@ -233,7 +243,7 @@ def get_todos_los_emails() -> list:
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
     r = requests.get(
-        f"{SUPABASE_URL}/rest/v1/profiles?select=email,alias",
+        f"{SUPABASE_URL}/rest/v1/profiles?select=email,nombre",
         headers=headers, timeout=15
     )
     if r.status_code == 200:
