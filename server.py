@@ -35,8 +35,6 @@ app.after_request(add_cors)
 
 @app.route("/snaptrade/connect", methods=["OPTIONS"])
 @app.route("/snaptrade/data", methods=["OPTIONS"])
-@app.route("/api/setups", methods=["OPTIONS"])
-@app.route("/api/scanner", methods=["OPTIONS"])
 def snaptrade_options():
     return jsonify({})
 
@@ -48,6 +46,34 @@ RESEND_FROM   = os.environ.get("RESEND_FROM", "")
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "https://othghdtplmlkrqwfcjzk.supabase.co")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 MADRID        = pytz.timezone("Europe/Madrid")
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  POLYGON.IO (13/08/2026) — NUEVO en server.py (antes solo lo usaba el cron
+#  en market_tracker.py). Hace falta aquí para reconstruir la curva de
+#  capital día a día con precios REALES de mercado, no con el coste de
+#  compra — solo se piden los tickers concretos que aparecen en el
+#  historial de órdenes de cada alumno, no el universo completo.
+# ══════════════════════════════════════════════════════════════════════════════
+POLYGON_KEY = os.environ.get("POLYGON_API_KEY", "4qgTyqfpFuFbTfQPrL4mTrIA7a8NDi21")
+
+def pg_daily_closes(ticker, start_date, end_date):
+    """Cierres diarios de un ticker entre dos fechas (YYYY-MM-DD). Devuelve
+    {fecha: cierre} — dict vacío si falla, nunca lanza excepción hacia arriba
+    (un ticker raro no debe tirar abajo toda la curva de los demás)."""
+    try:
+        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_date}/{end_date}"
+        r = requests.get(url, params={"apiKey": POLYGON_KEY, "adjusted": "true", "sort": "asc", "limit": 5000}, timeout=15)
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        out = {}
+        for bar in data.get("results", []):
+            fecha = datetime.fromtimestamp(bar["t"]/1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            out[fecha] = bar["c"]
+        return out
+    except Exception as e:
+        log.warning(f"pg_daily_closes error para {ticker}: {e}")
+        return {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -82,61 +108,6 @@ def verify_supabase_user(req, expected_user_id):
     except Exception as e:
         log.warning(f"verify_supabase_user error: {e}")
         return False
-
-
-def verify_any_authenticated_user(req):
-    """Igual que verify_supabase_user pero sin exigir que coincida con un
-    user_id concreto — solo que exista una sesión válida. Se usa para datos
-    que no son privados de un usuario (Setups/Scanner), pero que sí
-    queremos que solo vean alumnos logueados, no cualquiera con la URL.
-    Devuelve el user_id real si es válido, o None si no lo es — así se
-    puede usar ese id para limitar peticiones por persona."""
-    auth_header = req.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header[7:].strip()
-    if not token:
-        return None
-    try:
-        r = requests.get(
-            f"{SUPABASE_URL}/auth/v1/user",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {token}"},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return None
-        uid = r.json().get("id")
-        return uid if uid else None
-    except Exception as e:
-        log.warning(f"verify_any_authenticated_user error: {e}")
-        return None
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  LÍMITE DE PETICIONES (13/07/2026) — sencillo, en memoria, sin depender de
-#  nada externo (Redis, etc.). Vale porque tu servicio corre en UNA sola
-#  instancia de Render (no repartido entre varios servidores) — si algún día
-#  escalas a varias instancias, esto habría que moverlo a algo compartido
-#  (ej. una tabla en Supabase), porque cada instancia tendría su propio
-#  contador y el límite real sería más alto de lo que parece.
-#  30 peticiones por minuto por usuario es de sobra para uso normal
-#  (cambiar de pestaña/modo en Scanner o Setups no llega ni de lejos a eso),
-#  pero corta en seco un script que intente barrer todos los modos en bucle.
-# ══════════════════════════════════════════════════════════════════════════════
-import time as _time
-from collections import defaultdict as _defaultdict, deque as _deque
-
-_rate_limit_store = _defaultdict(_deque)
-
-def check_rate_limit(key, max_requests=30, window_seconds=60):
-    now = _time.time()
-    dq = _rate_limit_store[key]
-    while dq and dq[0] < now - window_seconds:
-        dq.popleft()
-    if len(dq) >= max_requests:
-        return False
-    dq.append(now)
-    return True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1152,11 +1123,8 @@ def snaptrade_data():
 
     # 5. Actividades de la cuenta (depósitos/retiradas/dividendos/trades) —
     # NUEVO (09/07/2026), AMPLIADO (13/07/2026): SnapTrade confirmó por email
-    # que ahora dan histórico de "año actual + 2 años anteriores" para IBKR
-    # (antes solo pedíamos 365 días, dejando fuera hasta 2 años de historial
-    # real disponible). Sigue limitado por la fecha de alta de la cuenta y
-    # de cuándo se activó el feed — pedir de más no hace daño, si no hay
-    # tanto historial disponible, SnapTrade simplemente devuelve lo que haya.
+    # que ahora dan histórico de "año actual + 2 años anteriores" para IBKR.
+    # (Esta vez el fichero subido no lo tenía — re-aplicado.)
     try:
         end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         start_date = f"{datetime.now(timezone.utc).year - 2}-01-01"
@@ -1170,63 +1138,38 @@ def snaptrade_data():
     except Exception as e:
         log.warning(f"SnapTrade activities error: {e}")
 
+    # 6. NUEVO (13/08/2026): precios históricos reales de los tickers que
+    # aparecen en el historial de órdenes — para reconstruir la curva de
+    # capital día a día con precio de mercado real, no con el coste medio
+    # de compra. Solo se piden los tickers concretos de ESTE alumno, no el
+    # universo entero — mucho más ligero.
+    try:
+        tickers_operados = set()
+        for o in result.get("orders", []):
+            tk = (o.get("universal_symbol") or {}).get("symbol") or o.get("symbol")
+            if tk and isinstance(tk, str) and len(tk) <= 6:  # descarta el UUID crudo cuando no hay universal_symbol
+                tickers_operados.add(tk)
+        fecha_min = None
+        for o in result.get("orders", []):
+            f = (o.get("time_placed") or o.get("time_executed") or "")[:10]
+            if f and (fecha_min is None or f < fecha_min):
+                fecha_min = f
+        if tickers_operados and fecha_min:
+            hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            price_history = {}
+            for tk in tickers_operados:
+                closes = pg_daily_closes(tk, fecha_min, hoy)
+                if closes:
+                    price_history[tk] = closes
+            result["priceHistory"] = price_history
+            log.info(f"Precios históricos: {len(price_history)}/{len(tickers_operados)} tickers, desde {fecha_min}")
+    except Exception as e:
+        log.warning(f"Error obteniendo precios históricos para la curva de equity: {e}")
+
     return jsonify(result)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  SETUPS DIARIOS + SCANNER (13/07/2026) — servidos ya calculados desde
-#  Supabase (app_state, key="setups_scanner"), calculado por market_tracker.py
-#  en cada corrida del cron. El navegador ya NO tiene las fórmulas de
-#  detección — solo pide el resultado y lo pinta. Requiere sesión válida
-#  (cualquier alumno logueado, no un user_id concreto — este dato no es
-#  privado de nadie, pero tampoco público sin cuenta).
-# ══════════════════════════════════════════════════════════════════════════════
-def get_setups_scanner_data() -> dict:
-    if not SUPABASE_KEY:
-        return {}
-    try:
-        h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
-        r = requests.get(f"{SUPABASE_URL}/rest/v1/app_state?key=eq.setups_scanner&select=value",
-                          headers=h, timeout=10)
-        if r.status_code == 200:
-            rows = r.json()
-            if rows:
-                return rows[0].get("value", {})
-    except Exception as e:
-        log.warning(f"Error leyendo setups_scanner de Supabase: {e}")
-    return {}
 
-
-@app.route("/api/setups", methods=["GET"])
-def api_setups():
-    uid = verify_any_authenticated_user(request)
-    if not uid:
-        return jsonify({"error": "No autorizado."}), 401
-    if not check_rate_limit(f"setups:{uid}"):
-        return jsonify({"error": "Demasiadas peticiones — espera un momento."}), 429
-    mode = request.args.get("mode", "")
-    data = get_setups_scanner_data()
-    setups = data.get("setups", {})
-    if mode:
-        return jsonify({"mode": mode, "results": setups.get(mode, [])})
-    return jsonify({"modes": list(setups.keys()), "results": setups})
-
-
-@app.route("/api/scanner", methods=["GET"])
-def api_scanner():
-    uid = verify_any_authenticated_user(request)
-    if not uid:
-        return jsonify({"error": "No autorizado."}), 401
-    if not check_rate_limit(f"scanner:{uid}"):
-        return jsonify({"error": "Demasiadas peticiones — espera un momento."}), 429
-    mode = request.args.get("mode", "")
-    data = get_setups_scanner_data()
-    scanner = data.get("scanner", {})
-    if mode:
-        return jsonify({"mode": mode, "results": scanner.get(mode, [])})
-    return jsonify({"modes": list(scanner.keys()), "results": scanner})
-
-
-
+    port = int(os.environ.get("PORT", 10000))
     log.info(f"Servidor arrancando en puerto {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
